@@ -188,16 +188,10 @@ in
       };
     };
     systemd.tmpfiles.packages = [
-      (pkgs.writeTextFile {
-        name = "system-manager-tmpfiles.d";
-        destination = "/lib/tmpfiles.d/00-system-manager.conf";
-        text = ''
-          # This file is created automatically and should not be modified.
-          # Please change the option ‘systemd.tmpfiles.rules’ instead.
-
-          ${concatStringsSep "\n" config.systemd.tmpfiles.rules}
-        '';
-      })
+      (pkgs.runCommand "system-manager-tmpfiles-d-package" {} ''
+        mkdir -p $out/lib/tmpfiles.d
+        echo "${concatStringsSep "\n" config.systemd.tmpfiles.rules}" > $out/lib/tmpfiles.d/00-system-manager.conf
+      '')
     ]
     ++ (mapAttrsToList (
       name: paths: pkgs.writeTextDir "lib/tmpfiles.d/${name}.conf" (mkRuleFileContent paths)
