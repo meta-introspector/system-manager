@@ -7,7 +7,7 @@
 //! - Remote deployment via SSH
 //! - Uniform sudo handling (local and remote)
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use rpassword::prompt_password;
 use std::fs::{create_dir_all, OpenOptions};
@@ -262,6 +262,8 @@ enum Action {
         #[command(flatten)]
         sudo_args: SudoArgs,
     },
+    /// List all services and files managed by the active system-manager profile
+    List,
 }
 
 fn main() -> ExitCode {
@@ -407,16 +409,28 @@ fn go(args: Args) -> Result<()> {
             sudo_args,
         } => {
             let mut nix_build_options = NixBuildOptions::from(&build_args);
-            let sudo_options = sudo_args.to_sudo_options(legacy_use_remote_sudo)?;
-            let store_path = do_build(&mut nix_build_options, &nix_options)?;
-            copy_closure(&store_path, &target_host, &ssh_options)?;
+            let sudo_options = sudo_args.to_sudo_options(legacy_use_remote_sudo)
+                .context("Failed to get sudo options")?;
+
+            log::debug!("Starting build...");
+            let store_path = do_build(&mut nix_build_options, &nix_options)
+                .context("Build failed")?;
+            
+            log::debug!("Copying closure to target host if specified...");
+            copy_closure(&store_path, &target_host, &ssh_options)
+                .context("Failed to copy closure")?;
+
+            log::debug!("Invoking engine to register profile...");
             invoke_engine_register(
                 &store_path,
                 &target_host,
                 &sudo_options,
                 &ssh_options,
                 verbose,
-            )?;
+            )
+            .context("Failed to register profile")?;
+
+            log::debug!("Invoking engine to activate profile...");
             invoke_engine_activate(
                 &store_path,
                 ephemeral,
@@ -425,6 +439,8 @@ fn go(args: Args) -> Result<()> {
                 &ssh_options,
                 verbose,
             )
+            .context("Failed to activate profile")?;
+            Ok(())
         }
 
         Action::Activate {
@@ -442,6 +458,9 @@ fn go(args: Args) -> Result<()> {
                 &ssh_options,
                 verbose,
             )
+        }
+        Action::List => {
+            system_manager_engine::list::list_profile()
         }
     }
 }
@@ -754,6 +773,7 @@ fn invoke_engine_local(
 ) -> Result<process::ExitStatus> {
     if sudo_options.is_enabled() {
         let mut cmd = process::Command::new("sudo");
+        cmd.arg("-E"); // Preserve the environment
         if sudo_options.password.is_some() {
             cmd.arg("-S");
         }

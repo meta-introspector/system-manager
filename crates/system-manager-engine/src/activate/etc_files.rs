@@ -225,26 +225,37 @@ fn list_static_entries(config_entries: &EtcFilesConfig) -> anyhow::Result<Vec<Et
             .get(i)
             .context("ERROR: index error in dir loop")?
             .clone();
-        let dir_content = fs::read_dir(&dir.absolute_path)?;
+        let dir_content = match fs::read_dir(&dir.absolute_path) {
+            Ok(content) => content,
+            Err(e) => {
+                log::warn!("Failed to read directory {}: {}. Skipping.", dir.absolute_path.display(), e);
+                i += 1;
+                continue;
+            }
+        };
         for file in dir_content {
             let file = file?;
+            log::info!("[DEBUG] Processing path: {}", file.path().display());
             let file_path = file.path();
             if file_path.is_symlink() {
                 if let Ok(target_path) = fs::read_link(&file_path) {
                     if !target_path.exists() {
-                        log::warn!("Skipping broken symlink: {} -> {}", file_path.display(), target_path.display());
+                        log::warn!("[DEBUG] Found broken symlink, skipping: {} -> {}", file_path.display(), target_path.display());
                         continue;
                     }
                 } else {
-                    log::warn!("Skipping unreadable symlink: {}", file_path.display());
+                    log::warn!("[DEBUG] Found unreadable symlink, skipping: {}", file_path.display());
                     continue;
                 }
             }
 
             let canon_path = match fs::canonicalize(&file_path) {
-                Ok(path) => path,
+                Ok(path) => {
+                    log::debug!("[DEBUG] Canonicalized successfully: {}", path.display());
+                    path
+                },
                 Err(e) => {
-                    log::warn!("Failed to get canonical path for {}: {}. Skipping.", file_path.display(), e);
+                    log::warn!("[DEBUG] fs::canonicalize failed for {}: {}. Skipping.", file_path.display(), e);
                     continue;
                 }
             };

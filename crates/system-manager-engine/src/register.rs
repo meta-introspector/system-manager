@@ -46,7 +46,9 @@ fn install_nix_profile(
         .recursive(true)
         .create(profile_dir)
         .context("While creating the profile dir.")?;
-    let mut cmd = process::Command::new("nix-env");
+    let mut cmd = process::Command::new("sudo");
+    cmd.arg("-E"); // Preserve environment for PATH
+    cmd.arg("nix-env");
     cmd.arg("--profile")
         .arg(profile_dir.join(profile_name))
         .arg("--set")
@@ -72,11 +74,15 @@ pub fn build(
     nix_build_options: &mut NixBuildOptions,
     nix_options: &NixOptions,
 ) -> Result<StorePath> {
-    nix_build_options.flake_uri = find_flake_attr(nix_build_options, nix_options)?;
+    log::debug!("Finding flake attribute for: {}", nix_build_options.flake_uri);
+    nix_build_options.flake_uri = find_flake_attr(nix_build_options, nix_options)
+        .context(format!("Failed to find flake attribute for {}", nix_build_options.flake_uri))?;
 
     log::info!("Building new system-manager generation...");
     log::info!("Running nix build...");
-    let store_path = run_nix_build(nix_build_options, nix_options).and_then(get_store_path)?;
+    let store_path = run_nix_build(nix_build_options, nix_options)
+        .and_then(get_store_path)
+        .context("Nix build process failed")?;
     log::info!("Built system-manager profile {store_path}");
     Ok(store_path)
 }
@@ -260,7 +266,8 @@ fn get_nix_system(nix_options: &NixOptions) -> Result<String> {
 }
 
 fn nix_cmd(nix_options: &NixOptions) -> process::Command {
-    let mut cmd = process::Command::new("nix");
+    let nix_binary = std::env::var("NIX_BIN_PATH").unwrap_or_else(|_| "nix".to_string());
+    let mut cmd = process::Command::new(nix_binary);
     cmd.arg("--extra-experimental-features")
         .arg("nix-command flakes")
         .arg("--extra-substituters")
